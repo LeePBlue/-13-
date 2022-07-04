@@ -49,6 +49,7 @@ class Classifier(paddle.nn.Layer):
         #通过查手册，查看paddle.nn.ReLU()的对应的参数为：input，任意形状的Tensor，output: 和input具有相同形状的Tensor。简而言之就是输入一个多维数组，也会放回一个逻辑一样的多维数组。
         #之前一直去调学习率，和ehco了
         #最终这里我用的是三层前驱，学习率就用我之前最优解，0.0055，但是发现根本学不动，loss率很大，之后调整了学习率到0.0077。
+        #这里我试过一开始的初层是1000，以及400，但是效果不理想，所以这里我选择的是500。
         #使用三层前驱之后，一轮的速度明显下降，所以次数我从600->300，但是我发现，训练现实的acc都比较优，平均都是84以上，但是测试是83.135分，我估计是过拟合，所以调整了到160次，最终分数就是83.84
         self.fc1 = paddle.nn.Linear(in_features=29, out_features=40)
         self.fc2 = paddle.nn.Linear(in_features=40, out_features=500)
