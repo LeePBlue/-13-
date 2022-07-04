@@ -1,0 +1,146 @@
+#[1]
+import pandas as pd
+import paddle
+import numpy as np
+%pylab inline
+import seaborn as sns
+
+train_df = pd.read_csv('data/data137276/train.csv.zip')
+test_df = pd.read_csv('data/data137276/test.csv.zip')
+
+train_df = train_df.drop(['id', 'timecc'], axis=1)
+test_df = test_df.drop(['id', 'timecc'], axis=1)
+
+#[2]
+train_df.isnull().mean(0)
+
+#[3]
+train_df['win'].value_counts().plot(kind='bar')
+
+#[4]
+sns.distplot(train_df['kills'])
+
+#[5]
+sns.distplot(train_df['deaths'])
+
+#[6]
+sns.boxplot(y='kills', x='win', data=train_df)
+
+#[7]
+plt.scatter(train_df['kills'], train_df['deaths'])
+plt.xlabel('kills')
+plt.ylabel('deaths')
+
+#[8]
+for col in train_df.columns[1:]:
+    train_df[col] /= train_df[col].max()
+    test_df[col] /= test_df[col].max()
+
+#[9]
+class Classifier(paddle.nn.Layer):
+    # self代表类的实例自身
+    def __init__(self):
+        # 初始化父类中的一些参数
+        super(Classifier, self).__init__()
+        #之前一直去调学习率，和ehco，最后得到的最优分数为83.67，对应的参数是 学习率：0.55 训练次数：600，后来在看到注释的前向计算，就打算在此优化
+        #神经网络的前向计算，就是给定一组输入，计算输出的过程。这里先给出前向计算过程中，信息在各层之间的传递过程。
+        #设置隐含层参数
+        #本项目有两个参数，win and loss，所以隐含层设置两个
+        #通过查手册，查看paddle.nn.ReLU()的对应的参数为：input，任意形状的Tensor，output: 和input具有相同形状的Tensor。简而言之就是输入一个多维数组，也会放回一个逻辑一样的多维数组。
+        #之前一直去调学习率，和ehco了
+        #最终这里我用的是三层前驱，学习率就用我之前最优解，0.0055，但是发现根本学不动，loss率很大，之后调整了学习率到0.0077。
+        #使用三层前驱之后，一轮的速度明显下降，所以次数我从600->300，但是我发现，训练现实的acc都比较优，平均都是84以上，但是测试是83.135分，我估计是过拟合，所以调整了到160次，最终分数就是83.84
+        self.fc1 = paddle.nn.Linear(in_features=29, out_features=40)
+        self.fc2 = paddle.nn.Linear(in_features=40, out_features=500)
+        self.fc3_ = paddle.nn.Linear(in_features= 500, out_features= 250)
+        self.fc4 = paddle.nn.Linear(in_features= 250, out_features=125)
+        self.fc5 = paddle.nn.Linear(in_features= 125, out_features=500)
+        self.fc6_ = paddle.nn.Linear(in_features= 500, out_features=250)
+        self.fc7 = paddle.nn.Linear(in_features=250, out_features=125)
+        self.fc8 = paddle.nn.Linear(in_features=125, out_features=1)
+        self.relu = paddle.nn.ReLU()
+    
+    # 网络的前向计算
+    def forward(self, inputs):
+        x = self.relu(self.fc1(inputs))
+        x = self.fc2(x)
+        x = self.relu(self.fc3_(x))
+        x = self.fc4(x)
+        x = self.fc5(x)
+        x = self.relu(self.fc6_(x))
+        x = self.fc7(x)
+        x = self.fc8(x)
+        return x
+
+
+#[10]
+model = Classifier()
+model.train()
+opt = paddle.optimizer.SGD(learning_rate=0.0077, parameters=model.parameters())
+loss_fn = paddle.nn.BCEWithLogitsLoss()
+
+
+#[11]
+EPOCH_NUM = 160   # 设置外层循环次数
+BATCH_SIZE = 100  # 设置batch大小
+training_data = train_df.iloc[:-1000,].values.astype(np.float32)
+val_data = train_df.iloc[-1000:, ].values.astype(np.float32)
+
+# 定义外层循环
+for epoch_id in range(EPOCH_NUM):
+    # 在每轮迭代开始之前，将训练数据的顺序随机的打乱
+    
+    np.random.shuffle(training_data)
+    
+    # 将训练数据进行拆分，每个batch包含10条数据
+    mini_batches = [training_data[k:k+BATCH_SIZE] for k in range(0, len(training_data), BATCH_SIZE)]
+    
+    # 定义内层循环
+    for iter_id, mini_batch in enumerate(mini_batches):
+        x = np.array(mini_batch[:, 1:]) # 获得当前批次训练数据
+        y = np.array(mini_batch[:, :1]) # 获得当前批次训练标签
+        
+        # 将numpy数据转为飞桨动态图tensor的格式
+        features = paddle.to_tensor(x)
+        y = paddle.to_tensor(y)
+        
+        # 前向计算
+        predicts = model(features)
+        
+        # 计算损失
+        loss = loss_fn(predicts, y, )
+        avg_loss = paddle.mean(loss)
+        if iter_id%200==0:
+            acc = (predicts > 0).astype(int).flatten() == y.flatten().astype(int)
+            acc = acc.astype(float).mean()
+
+            print("epoch: {}, iter: {}, loss is: {}, acc is {}".format(epoch_id, iter_id, avg_loss.numpy(), acc.numpy()))
+        
+        # 反向传播，计算每层参数的梯度值
+        avg_loss.backward()
+        # 更新参数，根据设置好的学习率迭代一步
+        opt.step()
+        # 清空梯度变量，以备下一轮计算
+        opt.clear_grad()
+
+#[12]
+model.eval()
+test_data = paddle.to_tensor(test_df.values.astype(np.float32))
+test_predict = model(test_data)
+test_predict = (test_predict > 0).astype(int).flatten()
+
+
+#[13]
+pd.DataFrame({'win':
+              test_predict.numpy()
+             }).to_csv('submission.csv', index=None)
+
+!zip submission.zip submission.csv
+
+
+
+
+
+
+
+
